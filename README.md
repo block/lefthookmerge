@@ -1,36 +1,23 @@
-# lefthookmerge README
+# Merges global and repo lefthook configs
 
-Congrats, project leads! You got a new project to grow!
+This tool is designed to merge global lefthook config with per repo config. `lhm install` configures global
+`core.hooksPath` to call `lhm` which dynamically merges the global and repo lefthook configs, if they exist,
+using lefthooks' `extends` [mechanism](https://lefthook.dev/configuration/extends.html).
 
-This stub is meant to help you form a strong community around your work. It's yours to adapt, and may 
-diverge from this initial structure. Just keep the files seeded in this repo, and the rest is yours to evolve! 
+All standard lefthook config file names are supported: `lefthook.<ext>`, `.lefthook.<ext>` (and `.config/lefthook.<ext>`
+for repo configs), where `<ext>` is `yml`, `yaml`, `json`, `jsonc`, or `toml`.
 
-## Introduction
+## How it works
 
-Orient users to the project here. This is a good place to start with an assumption
-that the user knows very little - so start with the Big Picture and show how this
-project fits into it.
+### `lhm install`
 
-Then maybe a dive into what this project does.
+- Creates symlinks for all standard git hooks in `~/.lhm/hooks/`, each pointing to the `lhm` binary
+- Sets `git config --global core.hooksPath ~/.lhm/hooks`
 
-Diagrams and other visuals are helpful here. Perhaps code snippets showing usage.
+### Hook execution
 
-Project leads should complete, alongside this `README`:
+When git triggers a hook, it invokes the symlink in `~/.lhm/hooks/`. `lhm` detects the hook name from `argv[0]` and:
 
-* [CODEOWNERS](./CODEOWNERS) - set project lead(s)
-* [CONTRIBUTING.md](./CONTRIBUTING.md) - Fill out how to: install prereqs, build, test, run, access CI, chat, discuss, file issues
-* [Bug-report.md](.github/ISSUE_TEMPLATE/bug-report.md) - Fill out `Assignees` add codeowners @names
-* [config.yml](.github/ISSUE_TEMPLATE/config.yml) - remove "(/add your discord channel..)" and replace the url with your Discord channel if applicable
-
-The other files in this template repo may be used as-is:
-
-* [GOVERNANCE.md](./GOVERNANCE.md)
-* [LICENSE](./LICENSE)
-
-## Project Resources
-
-| Resource                                   | Description                                                                    |
-| ------------------------------------------ | ------------------------------------------------------------------------------ |
-| [CODEOWNERS](./CODEOWNERS)                 | Outlines the project lead(s)                                                   |
-| [GOVERNANCE.md](./GOVERNANCE.md)           | Project governance                                                             |
-| [LICENSE](./LICENSE)                       | Apache License, Version 2.0                                                    |
+1. **Both configs exist** (`~/.lefthook.yaml` + `$REPO/lefthook.yaml`): generates a temp config with `extends:` referencing both, runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to it
+2. **One config exists**: runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to that file
+3. **Neither exists**: falls back to `$REPO/.git/hooks/<hook>` if present and executable
