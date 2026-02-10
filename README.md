@@ -1,4 +1,12 @@
-# Merges global and repo lefthook configs
+# lhm - Merges global and repo lefthook configs
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/block/lefthookmerge/main/install.sh | sh
+```
+
+## Overview
 
 This tool is designed to merge global lefthook config with per repo config. `lhm install` configures global
 `core.hooksPath` to call `lhm` which dynamically merges the global and repo lefthook configs, if they exist,
