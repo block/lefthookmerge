@@ -29,3 +29,12 @@ When git triggers a hook, it invokes the symlink in `~/.lhm/hooks/`. `lhm` detec
 1. **Both configs exist** (`~/.lefthook.yaml` + `$REPO/lefthook.yaml`): generates a temp config with `extends:` referencing both, runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to it
 2. **One config exists**: runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to that file
 3. **Neither exists**: falls back to `$REPO/.git/hooks/<hook>` if present and executable
+
+### Debugging
+
+Enable debug logging with `--debug` or `LHM_DEBUG=1`:
+
+```sh
+lhm --debug install
+LHM_DEBUG=1 git commit
+```

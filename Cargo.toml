@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.57", features = ["derive"] }
+serde_yaml = "0.9.34"
 tempfile = "3.25.0"
