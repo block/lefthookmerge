@@ -19,6 +19,7 @@ for repo configs), where `<ext>` is `yml`, `yaml`, `json`, `jsonc`, or `toml`.
 
 ### `lhm install`
 
+- Creates a default `~/.lefthook.yaml` if no global config exists
 - Creates symlinks for all standard git hooks in `~/.lhm/hooks/`, each pointing to the `lhm` binary
 - Sets `git config --global core.hooksPath ~/.lhm/hooks`
 

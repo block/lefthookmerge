@@ -113,6 +113,38 @@ fn hooks_dir() -> PathBuf {
 
 const LEFTHOOK_EXTENSIONS: &[&str] = &["yml", "yaml", "json", "jsonc", "toml"];
 
+const DEFAULT_GLOBAL_CONFIG: &str = r#"# Global lefthook configuration
+output:
+  - success
+  - failure
+pre-push:
+  parallel: true
+  commands:
+    test:
+      run: just test
+      if:
+        - run: grep -qe ^test Justfile 2> /dev/null
+    lint:
+      run: just lint
+      if:
+        - run: grep -qe ^lint Justfile 2> /dev/null
+prepare-commit-msg:
+  parallel: true
+  commands:
+    aittributor:
+      run: aittributor {1}
+      skip:
+        - run: which aittributor > /dev/null
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      stage_fixed: true
+      run: just fmt
+      if:
+        - run: grep -qe ^fmt Justfile 2> /dev/null
+"#;
+
 /// Search for a lefthook config file in the given directory.
 /// Checks `lefthook.<ext>`, `.lefthook.<ext>`, and optionally `.config/lefthook.<ext>`.
 fn find_config(dir: &Path, check_dot_config: bool) -> Option<PathBuf> {
@@ -156,11 +188,29 @@ fn repo_root() -> Option<PathBuf> {
         .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
 }
 
+/// Write the default global config to `~/.lefthook.yaml` if no global config exists.
+fn install_default_global_config(home: &Path) -> Result<(), String> {
+    if find_config(home, false).is_some() {
+        debug!("global config already exists, skipping default");
+        return Ok(());
+    }
+    let path = home.join(".lefthook.yaml");
+    fs::write(&path, DEFAULT_GLOBAL_CONFIG)
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    eprintln!("lhm: created default global config at {}", path.display());
+    Ok(())
+}
+
 fn install() -> ExitCode {
     let dir = hooks_dir();
     let binary = env::current_exe().expect("cannot determine lhm binary path");
     debug!("hooks dir: {}", dir.display());
     debug!("binary path: {}", binary.display());
+
+    if let Err(e) = install_default_global_config(&home_dir()) {
+        eprintln!("lhm: {e}");
+        return ExitCode::FAILURE;
+    }
 
     if let Err(e) = create_hook_symlinks(&dir, &binary) {
         eprintln!("lhm: {e}");
@@ -447,10 +497,10 @@ fn merge_jobs(global: Value, repo: Value) -> Value {
 
             // Add global jobs, skipping named ones that repo overrides
             for job in global_jobs {
-                if let Some(name) = job_name(job) {
-                    if repo_names.iter().any(|rn| *rn == Some(name)) {
-                        continue;
-                    }
+                if let Some(name) = job_name(job)
+                    && repo_names.contains(&Some(name))
+                {
+                    continue;
                 }
                 result.push(job.clone());
             }
@@ -789,5 +839,32 @@ pre-push:
         assert!(out.contains("just fmt"), "repo fmt: {out}");
         assert!(out.contains("just lint"), "repo lint: {out}");
         assert!(out.contains("just test"), "repo test: {out}");
+    }
+
+    #[test]
+    fn test_install_default_global_config_creates_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        install_default_global_config(dir.path()).unwrap();
+
+        let created = dir.path().join(".lefthook.yaml");
+        assert!(created.is_file());
+        let content = fs::read_to_string(&created).unwrap();
+        assert!(content.contains("pre-push:"));
+        assert!(content.contains("pre-commit:"));
+        assert!(content.contains("prepare-commit-msg:"));
+    }
+
+    #[test]
+    fn test_install_default_global_config_skips_when_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("lefthook.yml");
+        fs::write(&existing, "custom: true\n").unwrap();
+
+        install_default_global_config(dir.path()).unwrap();
+
+        // Original file untouched
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "custom: true\n");
+        // No .lefthook.yaml created
+        assert!(!dir.path().join(".lefthook.yaml").exists());
     }
 }
