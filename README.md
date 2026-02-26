@@ -19,17 +19,38 @@ for repo configs), where `<ext>` is `yml`, `yaml`, `json`, `jsonc`, or `toml`.
 
 ### `lhm install`
 
-- Creates a default `~/.lefthook.yaml` if no global config exists
 - Creates symlinks for all standard git hooks in `~/.lhm/hooks/`, each pointing to the `lhm` binary
 - Sets `git config --global core.hooksPath ~/.lhm/hooks`
+- With `--default-config`: writes a default `~/.lefthook.yaml` if no global config exists
+
+### `lhm dry-run`
+
+Prints the merged config that would be used for the current repo, then exits. Useful for verifying what hooks will run.
+
+```sh
+lhm dry-run
+```
 
 ### Hook execution
 
 When git triggers a hook, it invokes the symlink in `~/.lhm/hooks/`. `lhm` detects the hook name from `argv[0]` and:
 
-1. **Both configs exist** (`~/.lefthook.yaml` + `$REPO/lefthook.yaml`): generates a temp config with `extends:` referencing both, runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to it
-2. **One config exists**: runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to that file
-3. **Neither exists**: falls back to `$REPO/.git/hooks/<hook>` if present and executable
+1. **Global config** is always available: loaded from `~/.lefthook.yaml` if it exists, otherwise a built-in default is used in memory
+2. **Both configs exist** (`~/.lefthook.yaml` + `$REPO/lefthook.yaml`): merges global and repo configs, runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to the merged temp file
+3. **Global only** (no repo config or adapter): runs `lefthook run <hook>` with the global config
+4. **No repo config, but adapter detected**: generates a dynamic lefthook config from the adapter, merges it with the global config, and runs `lefthook run <hook>`
+
+### Adapters
+
+When a repo has no `lefthook.yaml`, lhm checks for other git hook managers and transparently adapts them. The generated adapter config is merged with `~/.lefthook.yaml` using the standard merging system, so global hooks still apply.
+
+Adapters are tried in this order (first match wins):
+
+| Adapter | Detects | Behavior |
+|---------|---------|----------|
+| **pre-commit** | `.pre-commit-config.yaml` | Translates `repo: local` hooks into lefthook commands (`entry` + `args` → `run`, `types`/`types_or` → `glob`, `files`/`exclude` preserved). Remote repos are skipped. |
+| **husky** | `.husky/` directory | Runs `.husky/<hook>` (if script exists) |
+| **hooks-dir** | `.hooks/` or `git-hooks/` directory | Runs `<dir>/<hook>` and all `<dir>/<hook>-*` prefixed scripts as parallel lefthook commands (`.hooks` takes priority if both exist) |
 
 ### Debugging
 

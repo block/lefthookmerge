@@ -1,36 +1,56 @@
+mod adapters;
+
 use clap::{Parser, Subcommand};
+use log::{debug, error, info};
 use serde_yaml::Value;
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::NamedTempFile;
 
-static DEBUG: AtomicBool = AtomicBool::new(false);
+fn init_logger(cli_debug: bool) {
+    let debug_enabled = cli_debug || env::var("LHM_DEBUG").is_ok_and(|v| v == "1" || v == "true");
 
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        if DEBUG.load(Ordering::Relaxed) {
-            eprintln!("lhm: debug: {}", format!($($arg)*));
-        }
+    let level = if debug_enabled {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
     };
-}
 
-fn init_debug() {
-    if env::var("LHM_DEBUG").is_ok_and(|v| v == "1" || v == "true") {
-        DEBUG.store(true, Ordering::Relaxed);
-    }
+    env_logger::Builder::new()
+        .filter_level(level)
+        .format(|buf, record| {
+            use std::io::Write;
+            match record.level() {
+                log::Level::Debug => writeln!(buf, "lhm: debug: {}", record.args()),
+                log::Level::Info => writeln!(buf, "lhm: {}", record.args()),
+                _ => writeln!(
+                    buf,
+                    "lhm: {}: {}",
+                    record.level().as_str().to_lowercase(),
+                    record.args()
+                ),
+            }
+        })
+        .init();
 }
 
 const GIT_HOOKS: &[&str] = &[
     "applypatch-msg",
     "commit-msg",
     "fsmonitor-watchman",
+    "post-applypatch",
+    "post-checkout",
+    "post-commit",
+    "post-merge",
+    "post-receive",
+    "post-rewrite",
     "post-update",
     "pre-applypatch",
+    "pre-auto-gc",
     "pre-commit",
     "pre-merge-commit",
     "pre-push",
@@ -38,6 +58,8 @@ const GIT_HOOKS: &[&str] = &[
     "pre-receive",
     "prepare-commit-msg",
     "push-to-checkout",
+    "reference-transaction",
+    "sendemail-validate",
     "update",
 ];
 
@@ -67,25 +89,29 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Configure global core.hooksPath to use lhm
-    Install,
+    Install {
+        /// Write the default global config to ~/.lefthook.yaml
+        #[arg(long)]
+        default_config: bool,
+    },
+    /// Print the merged config that would be used, then exit
+    DryRun,
 }
 
 fn main() -> ExitCode {
-    init_debug();
-
     let invoked_as = invoked_name();
 
     if is_hook_name(&invoked_as) {
+        init_logger(false);
         debug!("invoked as hook: {invoked_as}");
         return run_hook(&invoked_as, env::args().skip(1).collect());
     }
 
     let cli = Cli::parse();
-    if cli.debug {
-        DEBUG.store(true, Ordering::Relaxed);
-    }
+    init_logger(cli.debug);
     match cli.command {
-        Commands::Install => install(),
+        Commands::Install { default_config } => install(default_config),
+        Commands::DryRun => dry_run(),
     }
 }
 
@@ -122,12 +148,12 @@ pre-push:
   commands:
     test:
       run: just test
-      if:
-        - run: grep -qe ^test Justfile 2> /dev/null
+      skip:
+        - run: lefthook --dry-run test
     lint:
       run: just lint
-      if:
-        - run: grep -qe ^lint Justfile 2> /dev/null
+      skip:
+        - run: lefthook --dry-run lint
 prepare-commit-msg:
   parallel: true
   commands:
@@ -141,8 +167,8 @@ pre-commit:
     fmt:
       stage_fixed: true
       run: just fmt
-      if:
-        - run: grep -qe ^fmt Justfile 2> /dev/null
+      skip:
+        - run: lefthook --dry-run fmt
 "#;
 
 /// Search for a lefthook config file in the given directory.
@@ -197,23 +223,40 @@ fn install_default_global_config(home: &Path) -> Result<(), String> {
     let path = home.join(".lefthook.yaml");
     fs::write(&path, DEFAULT_GLOBAL_CONFIG)
         .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-    eprintln!("lhm: created default global config at {}", path.display());
+    info!("created default global config at {}", path.display());
     Ok(())
 }
 
-fn install() -> ExitCode {
+/// Parse `DEFAULT_GLOBAL_CONFIG` as YAML.
+fn parse_default_global_config() -> Value {
+    serde_yaml::from_str(DEFAULT_GLOBAL_CONFIG).expect("default config is valid YAML")
+}
+
+/// Load the effective global config: from `~/.lefthook.yaml` if it exists,
+/// otherwise fall back to the built-in `DEFAULT_GLOBAL_CONFIG`.
+fn load_global_config() -> Result<Value, String> {
+    match global_config() {
+        Some(path) => read_yaml(&path),
+        None => {
+            debug!("no global config file found, using built-in default");
+            Ok(parse_default_global_config())
+        }
+    }
+}
+
+fn install(default_config: bool) -> ExitCode {
     let dir = hooks_dir();
     let binary = env::current_exe().expect("cannot determine lhm binary path");
     debug!("hooks dir: {}", dir.display());
     debug!("binary path: {}", binary.display());
 
-    if let Err(e) = install_default_global_config(&home_dir()) {
-        eprintln!("lhm: {e}");
+    if default_config && let Err(e) = install_default_global_config(&home_dir()) {
+        error!("{e}");
         return ExitCode::FAILURE;
     }
 
     if let Err(e) = create_hook_symlinks(&dir, &binary) {
-        eprintln!("lhm: {e}");
+        error!("{e}");
         return ExitCode::FAILURE;
     }
 
@@ -224,12 +267,12 @@ fn install() -> ExitCode {
 
     match status {
         Ok(s) if s.success() => {
-            eprintln!("lhm: installed hooks to {}", dir.display());
-            eprintln!("lhm: set core.hooksPath = {}", dir.display());
+            info!("installed hooks to {}", dir.display());
+            info!("set core.hooksPath = {}", dir.display());
             ExitCode::SUCCESS
         }
         _ => {
-            eprintln!("lhm: failed to set core.hooksPath");
+            error!("failed to set core.hooksPath");
             ExitCode::FAILURE
         }
     }
@@ -246,38 +289,151 @@ fn create_hook_symlinks(dir: &Path, binary: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Hooks where commands mutate shared state and must not run in parallel.
+const SERIAL_HOOKS: &[&str] = &["prepare-commit-msg", "pre-commit"];
+
+/// Annotate adapter-generated config with lefthook settings:
+/// - `parallel: true` on hooks that don't mutate shared state
+/// - `stage_fixed: true` on each command within `pre-commit` hooks
+fn annotate_hooks(config: Value) -> Value {
+    let Value::Mapping(mut root) = config else {
+        return config;
+    };
+    for (key, val) in &mut root {
+        if let (Some(name), Value::Mapping(hook_map)) = (key.as_str(), val)
+            && is_hook_name(name)
+        {
+            if !SERIAL_HOOKS.contains(&name) {
+                hook_map.insert(Value::String("parallel".to_string()), Value::Bool(true));
+            }
+            if name == "pre-commit" {
+                set_stage_fixed(hook_map);
+            }
+        }
+    }
+    Value::Mapping(root)
+}
+
+/// Add `stage_fixed: true` to every command in a hook mapping.
+fn set_stage_fixed(hook_map: &mut serde_yaml::Mapping) {
+    let commands_key = Value::String("commands".to_string());
+    if let Some(Value::Mapping(commands)) = hook_map.get_mut(&commands_key) {
+        for (_cmd_name, cmd_val) in commands.iter_mut() {
+            if let Value::Mapping(cmd_map) = cmd_val {
+                cmd_map.insert(Value::String("stage_fixed".to_string()), Value::Bool(true));
+            }
+        }
+    }
+}
+
+fn adapter_config_for(root: &Path, hook_name: Option<&str>) -> Option<Value> {
+    let adapter = adapters::detect_adapter(root)?;
+    debug!("detected adapter: {}", adapter.name());
+
+    if let Some(name) = hook_name {
+        let config = adapter.generate_config(root, name);
+        if config.is_none() {
+            debug!("adapter {} has no config for {name}", adapter.name());
+        }
+        return config.map(annotate_hooks);
+    }
+
+    let mut combined: Option<Value> = None;
+    for name in GIT_HOOKS {
+        if let Some(config) = adapter.generate_config(root, name) {
+            combined = Some(match combined {
+                Some(existing) => merge_configs(existing, config),
+                None => config,
+            });
+        }
+    }
+    combined.map(annotate_hooks)
+}
+
+/// Resolve global, repo, and adapter sources into a single merged config.
+fn resolve_config(
+    global: &Value,
+    repo: &Option<PathBuf>,
+    adapter_config: &Option<Value>,
+) -> Result<Value, String> {
+    match (repo, adapter_config) {
+        (Some(r), _) => {
+            let rv = read_yaml(r)?;
+            Ok(merge_configs(global.clone(), rv))
+        }
+        (None, Some(av)) => Ok(merge_configs(global.clone(), av.clone())),
+        (None, None) => Ok(global.clone()),
+    }
+}
+
+fn dry_run() -> ExitCode {
+    let global = match load_global_config() {
+        Ok(v) => v,
+        Err(e) => {
+            error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let root = repo_root();
+    let repo = root.as_deref().and_then(repo_config);
+
+    let adapter_config = if repo.is_none() {
+        root.as_deref().and_then(|r| adapter_config_for(r, None))
+    } else {
+        None
+    };
+
+    if let Some(ref p) = repo {
+        debug!("repo config: {}", p.display());
+    }
+
+    match resolve_config(&global, &repo, &adapter_config) {
+        Ok(config) => {
+            print!("{}", serde_yaml::to_string(&config).unwrap_or_default());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            error!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
-    let global = global_config();
+    let global = match load_global_config() {
+        Ok(v) => v,
+        Err(e) => {
+            error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let root = repo_root();
     let repo = root.as_deref().and_then(repo_config);
 
     debug!("repo root: {:?}", root);
-    debug!("global config: {:?}", global);
     debug!("repo config: {:?}", repo);
 
-    if global.is_none() && repo.is_none() {
-        debug!("no lefthook configs found, falling back");
-        return run_fallback_hook(hook_name, &args);
-    }
-
-    let config_result = match (&global, &repo) {
-        (Some(g), Some(r)) => build_merged_config(g, r),
-        (Some(g), None) => Ok(ConfigSource::Path(g.clone())),
-        (None, Some(r)) => Ok(ConfigSource::Path(r.clone())),
-        (None, None) => unreachable!(),
+    let adapter_config = if repo.is_none() {
+        root.as_deref()
+            .and_then(|r| adapter_config_for(r, Some(hook_name)))
+    } else {
+        None
     };
 
-    let (config_path, _temp) = match config_result {
-        Ok(ConfigSource::Path(p)) => (p, None),
-        Ok(ConfigSource::Temp(t)) => {
-            let path = t.path().to_path_buf();
-            (path, Some(t))
-        }
+    let _temp = match resolve_config(&global, &repo, &adapter_config) {
+        Ok(merged) => match write_merged_temp(merged) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
         Err(e) => {
-            eprintln!("lhm: {e}");
+            error!("{e}");
             return ExitCode::FAILURE;
         }
     };
+    let config_path = _temp.path();
 
     debug!("LEFTHOOK_CONFIG={}", config_path.display());
     debug!(
@@ -290,7 +446,7 @@ fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
         .arg(hook_name)
         .arg("--no-auto-install")
         .args(&args)
-        .env("LEFTHOOK_CONFIG", &config_path)
+        .env("LEFTHOOK_CONFIG", config_path)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -300,22 +456,14 @@ fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(e) => {
-            eprintln!("lhm: failed to run lefthook: {e}");
+            error!("failed to run lefthook: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
-enum ConfigSource {
-    Path(PathBuf),
-    Temp(NamedTempFile),
-}
-
-fn build_merged_config(global: &Path, repo: &Path) -> Result<ConfigSource, String> {
-    let global_yaml = read_yaml(global)?;
-    let repo_yaml = read_yaml(repo)?;
-    let merged = merge_configs(global_yaml, repo_yaml);
-
+/// Serialize a merged config value to a temp file for lefthook.
+fn write_merged_temp(merged: Value) -> Result<NamedTempFile, String> {
     let content =
         serde_yaml::to_string(&merged).map_err(|e| format!("failed to serialize config: {e}"))?;
     debug!("merged config:\n{content}");
@@ -325,7 +473,7 @@ fn build_merged_config(global: &Path, repo: &Path) -> Result<ConfigSource, Strin
         .tempfile()
         .map_err(|e| format!("failed to create temp file: {e}"))?;
     write!(tmp, "{content}").map_err(|e| format!("failed to write temp config: {e}"))?;
-    Ok(ConfigSource::Temp(tmp))
+    Ok(tmp)
 }
 
 fn read_yaml(path: &Path) -> Result<Value, String> {
@@ -511,45 +659,6 @@ fn merge_jobs(global: Value, repo: Value) -> Value {
             Value::Sequence(result)
         }
         _ => repo,
-    }
-}
-
-fn run_fallback_hook(hook_name: &str, args: &[String]) -> ExitCode {
-    let Some(root) = repo_root() else {
-        debug!("not in a git repo, skipping fallback");
-        return ExitCode::SUCCESS;
-    };
-
-    let hook_path = root.join(".git").join("hooks").join(hook_name);
-    if !hook_path.is_file() {
-        debug!("no fallback hook at {}", hook_path.display());
-        return ExitCode::SUCCESS;
-    }
-
-    let Ok(meta) = hook_path.metadata() else {
-        return ExitCode::SUCCESS;
-    };
-    if meta.permissions().mode() & 0o111 == 0 {
-        debug!("fallback hook not executable: {}", hook_path.display());
-        return ExitCode::SUCCESS;
-    }
-
-    debug!("running fallback hook: {}", hook_path.display());
-
-    let status = Command::new(&hook_path)
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(_) => ExitCode::FAILURE,
-        Err(e) => {
-            eprintln!("lhm: failed to run {}: {e}", hook_path.display());
-            ExitCode::FAILURE
-        }
     }
 }
 
@@ -866,5 +975,78 @@ pre-push:
         assert_eq!(fs::read_to_string(&existing).unwrap(), "custom: true\n");
         // No .lefthook.yaml created
         assert!(!dir.path().join(".lefthook.yaml").exists());
+    }
+
+    #[test]
+    fn test_parse_default_global_config() {
+        let val = parse_default_global_config();
+        let out = to_yaml(&val);
+        assert!(out.contains("pre-push:"));
+        assert!(out.contains("pre-commit:"));
+        assert!(out.contains("prepare-commit-msg:"));
+    }
+
+    #[test]
+    fn test_annotate_hooks_parallel_on_safe_hooks() {
+        let config =
+            yaml("pre-push:\n  commands:\n    foo:\n      run: echo hi\noutput:\n  - success\n");
+        let result = annotate_hooks(config);
+        let out = to_yaml(&result);
+        assert!(out.contains("parallel: true"), "injects parallel: {out}");
+        assert!(out.contains("output:"), "non-hook keys preserved: {out}");
+    }
+
+    #[test]
+    fn test_annotate_hooks_no_parallel_on_serial_hooks() {
+        for hook in SERIAL_HOOKS {
+            let config = yaml(&format!(
+                "{hook}:\n  commands:\n    foo:\n      run: echo hi\n"
+            ));
+            let result = annotate_hooks(config);
+            let out = to_yaml(&result);
+            assert!(!out.contains("parallel"), "no parallel on {hook}: {out}");
+        }
+    }
+
+    #[test]
+    fn test_annotate_hooks_stage_fixed_on_pre_commit() {
+        let config = yaml(
+            "pre-commit:\n  commands:\n    foo:\n      run: echo hi\n    bar:\n      run: echo bye\n",
+        );
+        let result = annotate_hooks(config);
+        let out = to_yaml(&result);
+        assert!(
+            out.contains("stage_fixed: true"),
+            "injects stage_fixed: {out}"
+        );
+        assert!(
+            !out.contains("parallel"),
+            "no parallel on pre-commit: {out}"
+        );
+        // Both commands get stage_fixed
+        assert_eq!(
+            out.matches("stage_fixed").count(),
+            2,
+            "both commands get stage_fixed: {out}"
+        );
+    }
+
+    #[test]
+    fn test_annotate_hooks_no_stage_fixed_on_pre_push() {
+        let config = yaml("pre-push:\n  commands:\n    foo:\n      run: echo hi\n");
+        let result = annotate_hooks(config);
+        let out = to_yaml(&result);
+        assert!(
+            !out.contains("stage_fixed"),
+            "no stage_fixed on pre-push: {out}"
+        );
+    }
+
+    #[test]
+    fn test_annotate_hooks_skips_non_hook_keys() {
+        let config = yaml("output:\n  - success\n");
+        let result = annotate_hooks(config);
+        let out = to_yaml(&result);
+        assert!(!out.contains("parallel"), "no parallel on non-hook: {out}");
     }
 }
