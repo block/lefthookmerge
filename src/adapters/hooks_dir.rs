@@ -4,16 +4,18 @@ use std::path::Path;
 
 use super::Adapter;
 
-const HOOKS_DIR_NAMES: &[&str] = &[".hooks", "git-hooks", ".git/hooks"];
+const HOOKS_DIR_NAMES: &[&str] = &[".hooks", "git-hooks"];
 
 /// Adapter for conventional hooks directories in the repo root.
 ///
-/// Detects `.hooks/`, `git-hooks/`, or `.git/hooks/` (first match wins) and
-/// generates lefthook commands for all scripts matching the hook name: the exact
-/// match (e.g. `pre-commit`) plus any prefixed scripts (e.g. `pre-commit-checkstyle`).
+/// Detects `.hooks/` or `git-hooks/` (first match wins) and generates lefthook
+/// commands for all scripts matching the hook name: the exact match
+/// (e.g. `pre-commit`) plus any prefixed scripts (e.g. `pre-commit-checkstyle`).
 ///
-/// Symlinks are skipped in `.git/hooks/` to avoid loops when lefthook or lhm
-/// is installed there.
+/// `.git/hooks/` is intentionally excluded — it is git's internal mechanism and
+/// tools like husky, pre-commit, and lefthook write there as an implementation
+/// detail. Including it would risk double-executing hooks that are already
+/// handled by dedicated adapters or by lhm itself.
 pub struct HooksDirAdapter;
 
 /// Return the first hooks directory name that exists as a directory under `root`.
@@ -25,26 +27,15 @@ fn find_hooks_dir(root: &Path) -> Option<&'static str> {
 }
 
 /// Collect sorted filenames from `hooks_dir` that match `hook_name` exactly
-/// or start with `{hook_name}-`. When `skip_symlinks` is true, symlinks are
-/// excluded (used for `.git/hooks/` to avoid loops).
-fn matching_scripts(hooks_dir: &Path, hook_name: &str, skip_symlinks: bool) -> Vec<String> {
+/// or start with `{hook_name}-`.
+fn matching_scripts(hooks_dir: &Path, hook_name: &str) -> Vec<String> {
     let prefix = format!("{hook_name}-");
     let Ok(entries) = fs::read_dir(hooks_dir) else {
         return Vec::new();
     };
     let mut names: Vec<String> = entries
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            let path = e.path();
-            if skip_symlinks
-                && path
-                    .symlink_metadata()
-                    .is_ok_and(|m| m.file_type().is_symlink())
-            {
-                return false;
-            }
-            path.is_file()
-        })
+        .filter(|e| e.path().is_file())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             if name == hook_name || name.starts_with(&prefix) {
@@ -70,8 +61,7 @@ impl Adapter for HooksDirAdapter {
     fn generate_config(&self, root: &Path, hook_name: &str) -> Option<Value> {
         let dir_name = find_hooks_dir(root)?;
         let hooks_dir = root.join(dir_name);
-        let skip_symlinks = dir_name == ".git/hooks";
-        let scripts = matching_scripts(&hooks_dir, hook_name, skip_symlinks);
+        let scripts = matching_scripts(&hooks_dir, hook_name);
         if scripts.is_empty() {
             return None;
         }
@@ -120,10 +110,12 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_with_dot_git_hooks() {
+    fn test_detect_ignores_dot_git_hooks() {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
-        assert!(adapter().detect(dir.path()));
+        let hooks = dir.path().join(".git/hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        fs::write(hooks.join("pre-commit"), "#!/bin/sh\n").unwrap();
+        assert!(!adapter().detect(dir.path()));
     }
 
     #[test]
@@ -159,25 +151,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dot_hooks_takes_priority_over_dot_git_hooks() {
-        let dir = tempfile::tempdir().unwrap();
-        let dot_hooks = dir.path().join(".hooks");
-        let dot_git_hooks = dir.path().join(".git/hooks");
-        fs::create_dir_all(&dot_hooks).unwrap();
-        fs::create_dir_all(&dot_git_hooks).unwrap();
-        fs::write(dot_hooks.join("pre-commit"), "#!/bin/sh\n").unwrap();
-        fs::write(dot_git_hooks.join("pre-commit"), "#!/bin/sh\n").unwrap();
-
-        let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
-        let out = serde_yaml::to_string(&config).unwrap();
-        assert!(out.contains(".hooks/pre-commit"), "uses .hooks: {out}");
-        assert!(
-            !out.contains(".git/hooks"),
-            "does not use .git/hooks: {out}"
-        );
-    }
-
-    #[test]
     fn test_generate_config_with_hook_script() {
         let dir = tempfile::tempdir().unwrap();
         let hooks_dir = dir.path().join(".hooks");
@@ -202,22 +175,6 @@ mod tests {
         assert!(out.contains("pre-commit:"), "has hook key: {out}");
         assert!(
             out.contains("git-hooks/pre-commit"),
-            "has run command: {out}"
-        );
-    }
-
-    #[test]
-    fn test_generate_config_dot_git_hooks() {
-        let dir = tempfile::tempdir().unwrap();
-        let hooks_dir = dir.path().join(".git/hooks");
-        fs::create_dir_all(&hooks_dir).unwrap();
-        fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho hi\n").unwrap();
-
-        let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
-        let out = serde_yaml::to_string(&config).unwrap();
-        assert!(out.contains("pre-commit:"), "has hook key: {out}");
-        assert!(
-            out.contains(".git/hooks/pre-commit"),
             "has run command: {out}"
         );
     }
@@ -339,34 +296,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_dot_git_hooks_skips_symlinks() {
-        let dir = tempfile::tempdir().unwrap();
-        let hooks_dir = dir.path().join(".git/hooks");
-        fs::create_dir_all(&hooks_dir).unwrap();
-
-        // Regular script should be picked up
-        fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho hi\n").unwrap();
-        // Symlink (e.g. lefthook/lhm installed) should be skipped
-        let fake_binary = dir.path().join("lefthook");
-        fs::write(&fake_binary, "fake").unwrap();
-        symlink(&fake_binary, hooks_dir.join("pre-push")).unwrap();
-
-        let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
-        let out = serde_yaml::to_string(&config).unwrap();
-        assert!(
-            out.contains(".git/hooks/pre-commit"),
-            "picks up regular script: {out}"
-        );
-
-        assert!(
-            adapter().generate_config(dir.path(), "pre-push").is_none(),
-            "symlinked hook is skipped"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_dot_hooks_does_not_skip_symlinks() {
+    fn test_dot_hooks_follows_symlinks() {
         let dir = tempfile::tempdir().unwrap();
         let hooks_dir = dir.path().join(".hooks");
         fs::create_dir_all(&hooks_dir).unwrap();
@@ -392,7 +322,7 @@ mod tests {
         fs::write(hooks_dir.join("pre-commit-aaa"), "#!/bin/sh\n").unwrap();
         fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\n").unwrap();
 
-        let scripts = matching_scripts(&hooks_dir, "pre-commit", false);
+        let scripts = matching_scripts(&hooks_dir, "pre-commit");
         assert_eq!(
             scripts,
             vec!["pre-commit", "pre-commit-aaa", "pre-commit-zzz"]
@@ -407,7 +337,7 @@ mod tests {
         fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\n").unwrap();
         fs::create_dir_all(hooks_dir.join("pre-commit-subdir")).unwrap();
 
-        let scripts = matching_scripts(&hooks_dir, "pre-commit", false);
+        let scripts = matching_scripts(&hooks_dir, "pre-commit");
         assert_eq!(scripts, vec!["pre-commit"]);
     }
 }

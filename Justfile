@@ -18,6 +18,10 @@ build:
 test:
     cargo test --all-features
 
+# Run build with hot reload
+dev:
+    @proctor
+
 # Generate release notes from git log since previous tag
 release-notes tag="":
     #!/usr/bin/env bash

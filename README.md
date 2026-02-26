@@ -50,7 +50,7 @@ Adapters are tried in this order (first match wins):
 |---------|---------|----------|
 | **pre-commit** | `.pre-commit-config.yaml` | Translates `repo: local` hooks into lefthook commands (`entry` + `args` → `run`, `types`/`types_or` → `glob`, `files`/`exclude` preserved). Remote repos are skipped. |
 | **husky** | `.husky/` directory | Runs `.husky/<hook>` (if script exists) |
-| **hooks-dir** | `.hooks/`, `git-hooks/`, or `.git/hooks/` directory | Runs `<dir>/<hook>` and all `<dir>/<hook>-*` prefixed scripts as parallel lefthook commands. Checked in order (first match wins). Symlinks in `.git/hooks/` are skipped to avoid loops. |
+| **hooks-dir** | `.hooks/` or `git-hooks/` directory | Runs `<dir>/<hook>` (if script exists) and all `<dir>/<hook>-*` prefixed scripts as parallel lefthook commands. Checked in order (first match wins). `.git/hooks/` is intentionally excluded to avoid double-executing hooks already handled by dedicated adapters or lhm itself. |
 
 ### Debugging
 

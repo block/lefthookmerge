@@ -72,7 +72,7 @@ Merges global and per-repo lefthook configs.
 When invoked as a git hook (via symlink), lhm finds the global config \
 (~/.lefthook.yaml) and repo config ($REPO/lefthook.yaml), merges them using lefthook's \
 extends mechanism, and runs lefthook. If neither config exists, falls back to \
-$REPO/.git/hooks/<hook>.
+the adapter system.
 
 Supported config names: lefthook.<ext>, .lefthook.<ext>, .config/lefthook.<ext>
 Supported extensions: yml, yaml, json, jsonc, toml"
@@ -155,14 +155,12 @@ pre-push:
       skip:
         - run: lefthook --dry-run lint
 prepare-commit-msg:
-  parallel: true
   commands:
     aittributor:
       run: aittributor {1}
       skip:
         - run: which aittributor > /dev/null
 pre-commit:
-  parallel: true
   commands:
     fmt:
       stage_fixed: true
