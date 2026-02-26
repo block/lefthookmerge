@@ -230,11 +230,15 @@ fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
     };
 
     debug!("LEFTHOOK_CONFIG={}", config_path.display());
-    debug!("running: lefthook run {hook_name} {}", args.join(" "));
+    debug!(
+        "running: lefthook run {hook_name} --no-auto-install {}",
+        args.join(" ")
+    );
 
     let status = Command::new("lefthook")
         .arg("run")
         .arg(hook_name)
+        .arg("--no-auto-install")
         .args(&args)
         .env("LEFTHOOK_CONFIG", &config_path)
         .stdin(Stdio::inherit())
