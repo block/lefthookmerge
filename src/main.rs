@@ -288,11 +288,19 @@ fn create_hook_symlinks(dir: &Path, binary: &Path) -> Result<(), String> {
 }
 
 /// Hooks where commands mutate shared state and must not run in parallel.
-const SERIAL_HOOKS: &[&str] = &["prepare-commit-msg", "pre-commit"];
+/// - `pre-commit` / `pre-merge-commit`: formatters mutate the working tree/index
+/// - `prepare-commit-msg` / `commit-msg` / `applypatch-msg`: edit a single message file
+const SERIAL_HOOKS: &[&str] = &[
+    "applypatch-msg",
+    "commit-msg",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+];
 
 /// Annotate adapter-generated config with lefthook settings:
 /// - `parallel: true` on hooks that don't mutate shared state
-/// - `stage_fixed: true` on each command within `pre-commit` hooks
+/// - `stage_fixed: true` on each command within `pre-commit` and `pre-merge-commit` hooks
 fn annotate_hooks(config: Value) -> Value {
     let Value::Mapping(mut root) = config else {
         return config;
@@ -304,7 +312,7 @@ fn annotate_hooks(config: Value) -> Value {
             if !SERIAL_HOOKS.contains(&name) {
                 hook_map.insert(Value::String("parallel".to_string()), Value::Bool(true));
             }
-            if name == "pre-commit" {
+            if name == "pre-commit" || name == "pre-merge-commit" {
                 set_stage_fixed(hook_map);
             }
         }
@@ -1007,26 +1015,24 @@ pre-push:
     }
 
     #[test]
-    fn test_annotate_hooks_stage_fixed_on_pre_commit() {
-        let config = yaml(
-            "pre-commit:\n  commands:\n    foo:\n      run: echo hi\n    bar:\n      run: echo bye\n",
-        );
-        let result = annotate_hooks(config);
-        let out = to_yaml(&result);
-        assert!(
-            out.contains("stage_fixed: true"),
-            "injects stage_fixed: {out}"
-        );
-        assert!(
-            !out.contains("parallel"),
-            "no parallel on pre-commit: {out}"
-        );
-        // Both commands get stage_fixed
-        assert_eq!(
-            out.matches("stage_fixed").count(),
-            2,
-            "both commands get stage_fixed: {out}"
-        );
+    fn test_annotate_hooks_stage_fixed_on_pre_commit_hooks() {
+        for hook in &["pre-commit", "pre-merge-commit"] {
+            let config = yaml(&format!(
+                "{hook}:\n  commands:\n    foo:\n      run: echo hi\n    bar:\n      run: echo bye\n"
+            ));
+            let result = annotate_hooks(config);
+            let out = to_yaml(&result);
+            assert!(
+                out.contains("stage_fixed: true"),
+                "injects stage_fixed on {hook}: {out}"
+            );
+            assert!(!out.contains("parallel"), "no parallel on {hook}: {out}");
+            assert_eq!(
+                out.matches("stage_fixed").count(),
+                2,
+                "both commands get stage_fixed on {hook}: {out}"
+            );
+        }
     }
 
     #[test]
