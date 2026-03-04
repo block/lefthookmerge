@@ -35,6 +35,7 @@ lhm dry-run
 
 When git triggers a hook, it invokes the symlink in `~/.lhm/hooks/`. `lhm` detects the hook name from `argv[0]` and:
 
+0. **lefthook not in PATH**: falls back to executing `.git/hooks/<hook>` directly (if it exists), bypassing all config merging
 1. **Global config** is always available: loaded from `~/.lefthook.yaml` if it exists, otherwise a built-in default is used in memory
 2. **Both configs exist** (`~/.lefthook.yaml` + `$REPO/lefthook.yaml`): merges global and repo configs, runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to the merged temp file
 3. **Global only** (no repo config or adapter): runs `lefthook run <hook>` with the global config

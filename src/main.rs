@@ -405,7 +405,51 @@ fn dry_run() -> ExitCode {
     }
 }
 
+fn lefthook_in_path() -> bool {
+    Command::new("lefthook")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
+/// Run the repo's `.git/hooks/<hook_name>` script directly.
+/// Returns SUCCESS if the script doesn't exist (no hook to run).
+fn run_git_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
+    let root = match repo_root() {
+        Some(r) => r,
+        None => return ExitCode::SUCCESS,
+    };
+    let hook_path = root.join(".git/hooks").join(hook_name);
+    if !hook_path.is_file() {
+        debug!("no .git/hooks/{hook_name} found, skipping");
+        return ExitCode::SUCCESS;
+    }
+    debug!("running .git/hooks/{hook_name} directly (lefthook not in PATH)");
+    let status = Command::new(&hook_path)
+        .args(&args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => {
+            error!("failed to run .git/hooks/{hook_name}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
+    if !lefthook_in_path() {
+        debug!("lefthook not found in PATH, falling back to .git/hooks");
+        return run_git_hook(hook_name, args);
+    }
+
     let global = match load_global_config() {
         Ok(v) => v,
         Err(e) => {
@@ -1052,5 +1096,53 @@ pre-push:
         let result = annotate_hooks(config);
         let out = to_yaml(&result);
         assert!(!out.contains("parallel"), "no parallel on non-hook: {out}");
+    }
+
+    #[test]
+    fn test_run_git_hook_executes_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join(".git/hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("pre-commit");
+        fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let status = Command::new(&hook)
+            .status()
+            .expect("hook script should be executable");
+        assert!(status.success());
+    }
+
+    #[test]
+    fn test_run_git_hook_missing_hook_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let hook_path = dir.path().join(".git/hooks/pre-commit");
+        assert!(!hook_path.exists());
+        // run_git_hook returns SUCCESS when the hook doesn't exist
+    }
+
+    #[test]
+    fn test_run_git_hook_failing_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join(".git/hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("pre-commit");
+        fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let status = Command::new(&hook)
+            .status()
+            .expect("hook script should be executable");
+        assert!(!status.success());
     }
 }
