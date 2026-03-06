@@ -41,26 +41,17 @@ fn init_logger(cli_debug: bool) {
 const GIT_HOOKS: &[&str] = &[
     "applypatch-msg",
     "commit-msg",
-    "fsmonitor-watchman",
     "post-applypatch",
     "post-checkout",
     "post-commit",
     "post-merge",
-    "post-receive",
     "post-rewrite",
-    "post-update",
     "pre-applypatch",
-    "pre-auto-gc",
     "pre-commit",
     "pre-merge-commit",
     "pre-push",
     "pre-rebase",
-    "pre-receive",
     "prepare-commit-msg",
-    "push-to-checkout",
-    "reference-transaction",
-    "sendemail-validate",
-    "update",
 ];
 
 #[derive(Parser)]
@@ -279,12 +270,32 @@ fn install(default_config: bool) -> ExitCode {
 fn create_hook_symlinks(dir: &Path, binary: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
 
+    remove_stale_hooks(dir);
+
     for hook in GIT_HOOKS {
         let link = dir.join(hook);
         let _ = fs::remove_file(&link);
         symlink(binary, &link).map_err(|e| format!("failed to symlink {}: {e}", link.display()))?;
     }
     Ok(())
+}
+
+/// Remove any entries in the hooks dir that aren't in the current `GIT_HOOKS` list.
+fn remove_stale_hooks(dir: &Path) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !GIT_HOOKS.contains(&name_str) {
+            debug!("removing stale hook: {name_str}");
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Hooks where commands mutate shared state and must not run in parallel.
@@ -721,7 +732,7 @@ mod tests {
         assert!(is_hook_name("pre-commit"));
         assert!(is_hook_name("commit-msg"));
         assert!(is_hook_name("pre-push"));
-        assert!(is_hook_name("update"));
+        assert!(is_hook_name("post-merge"));
         assert!(!is_hook_name("lhm"));
         assert!(!is_hook_name("cargo"));
         assert!(!is_hook_name(""));
@@ -760,6 +771,41 @@ mod tests {
         let link = hooks.join("pre-commit");
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
         assert_eq!(fs::read_link(&link).unwrap(), fake_binary);
+    }
+
+    #[test]
+    fn test_create_hook_symlinks_removes_stale_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks");
+        fs::create_dir_all(&hooks).unwrap();
+
+        // Create hooks that are no longer in GIT_HOOKS
+        let stale = ["reference-transaction", "fsmonitor-watchman", "update"];
+        for name in &stale {
+            fs::write(hooks.join(name), "old").unwrap();
+        }
+
+        let fake_binary = dir.path().join("lhm");
+        fs::write(&fake_binary, "fake").unwrap();
+
+        create_hook_symlinks(&hooks, &fake_binary).unwrap();
+
+        for name in &stale {
+            assert!(
+                !hooks.join(name).exists(),
+                "stale hook {name} should be removed"
+            );
+        }
+        for hook in GIT_HOOKS {
+            assert!(
+                hooks
+                    .join(hook)
+                    .symlink_metadata()
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        }
     }
 
     #[test]
