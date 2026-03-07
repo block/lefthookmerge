@@ -2,8 +2,13 @@ skip_lfs: true
 output:
   - success
   - failure
+prepare-commit-msg:
+  commands:
+    aittributor:
+      run: aittributor {1}
+      skip:
+        - run: "! which aittributor"
 pre-commit:
-  parallel: true
   jobs:
     - name: fmt
       stage_fixed: true
