@@ -479,11 +479,7 @@ repos:
 "#,
         );
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
     }
 
     #[test]
@@ -561,11 +557,7 @@ repos:
 "#,
         );
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_some()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_some());
         assert!(adapter().generate_config(dir.path(), "pre-push").is_none());
     }
 
@@ -586,11 +578,7 @@ repos:
 "#,
         );
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
         assert!(adapter().generate_config(dir.path(), "pre-push").is_some());
     }
 
@@ -613,10 +601,7 @@ repos:
 
         let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
         let out = serde_yaml::to_string(&config).unwrap();
-        assert!(
-            out.contains("eslint --fix {staged_files}"),
-            "entry+args: {out}"
-        );
+        assert!(out.contains("eslint --fix {staged_files}"), "entry+args: {out}");
         assert!(out.contains("js"), "glob has js: {out}");
         assert!(out.contains("ts"), "glob has ts: {out}");
         assert!(out.contains("jsx"), "glob has jsx: {out}");
@@ -627,10 +612,6 @@ repos:
     fn test_generate_config_empty_repos() {
         let dir = tempfile::tempdir().unwrap();
         write_config(dir.path(), "repos: []\n");
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
     }
 }

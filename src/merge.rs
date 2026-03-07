@@ -86,11 +86,7 @@ fn collect_task_names_from_mapping(mapping: &serde_yaml::Mapping) -> Vec<String>
     // Names from jobs (name field)
     if let Some(Value::Sequence(jobs)) = mapping.get(Value::String("jobs".to_string())) {
         for job in jobs {
-            if let Some(name) = job
-                .as_mapping()
-                .and_then(|m| m.get("name"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(name) = job.as_mapping().and_then(|m| m.get("name")).and_then(|v| v.as_str()) {
                 names.push(name.to_string());
             }
         }
@@ -153,9 +149,7 @@ fn merge_jobs(global: Value, repo: Value) -> Value {
     match (&global, &repo) {
         (Value::Sequence(global_jobs), Value::Sequence(repo_jobs)) => {
             fn job_name(job: &Value) -> Option<&str> {
-                job.as_mapping()
-                    .and_then(|m| m.get("name"))
-                    .and_then(|v| v.as_str())
+                job.as_mapping().and_then(|m| m.get("name")).and_then(|v| v.as_str())
             }
 
             let repo_names: Vec<Option<&str>> = repo_jobs.iter().map(|j| job_name(j)).collect();
@@ -206,28 +200,20 @@ mod tests {
 
     #[test]
     fn test_merge_configs_commands_dedup() {
-        let global = yaml(
-            "pre-push:\n  commands:\n    test:\n      run: global-test\n    lint:\n      run: global-lint\n",
-        );
+        let global =
+            yaml("pre-push:\n  commands:\n    test:\n      run: global-test\n    lint:\n      run: global-lint\n");
         let repo = yaml("pre-push:\n  commands:\n    test:\n      run: repo-test\n");
         let merged = merge_configs(global, repo);
         let out = to_yaml(&merged);
         assert!(out.contains("repo-test"), "repo should win: {out}");
-        assert!(
-            !out.contains("global-test"),
-            "global test should be gone: {out}"
-        );
-        assert!(
-            out.contains("global-lint"),
-            "global-only lint preserved: {out}"
-        );
+        assert!(!out.contains("global-test"), "global test should be gone: {out}");
+        assert!(out.contains("global-lint"), "global-only lint preserved: {out}");
     }
 
     #[test]
     fn test_merge_configs_cross_format_commands_vs_jobs() {
-        let global = yaml(
-            "pre-push:\n  commands:\n    test:\n      run: global-test\n    lint:\n      run: global-lint\n",
-        );
+        let global =
+            yaml("pre-push:\n  commands:\n    test:\n      run: global-test\n    lint:\n      run: global-lint\n");
         let repo = yaml(
             "pre-push:\n  jobs:\n    - name: test\n      run: repo-test\n    - name: lint\n      run: repo-lint\n",
         );
@@ -243,23 +229,18 @@ mod tests {
 
     #[test]
     fn test_merge_configs_global_only_hook_preserved() {
-        let global =
-            yaml("prepare-commit-msg:\n  commands:\n    aittributor:\n      run: aittributor\n");
+        let global = yaml("prepare-commit-msg:\n  commands:\n    aittributor:\n      run: aittributor\n");
         let repo = yaml("pre-commit:\n  jobs:\n    - name: fmt\n      run: just fmt\n");
         let merged = merge_configs(global, repo);
         let out = to_yaml(&merged);
-        assert!(
-            out.contains("prepare-commit-msg"),
-            "global-only hook kept: {out}"
-        );
+        assert!(out.contains("prepare-commit-msg"), "global-only hook kept: {out}");
         assert!(out.contains("aittributor"), "global command kept: {out}");
         assert!(out.contains("pre-commit"), "repo hook kept: {out}");
     }
 
     #[test]
     fn test_merge_jobs_named_dedup() {
-        let global =
-            yaml("- name: test\n  run: global-test\n- name: unique\n  run: global-unique\n");
+        let global = yaml("- name: test\n  run: global-test\n- name: unique\n  run: global-unique\n");
         let repo = yaml("- name: test\n  run: repo-test\n");
         let merged = merge_jobs(global, repo);
         let out = to_yaml(&merged);
@@ -329,21 +310,12 @@ pre-push:
         assert!(out.contains("skip_lfs: true"), "repo skip_lfs: {out}");
 
         // Global-only hook preserved
-        assert!(
-            out.contains("prepare-commit-msg"),
-            "global hook kept: {out}"
-        );
+        assert!(out.contains("prepare-commit-msg"), "global hook kept: {out}");
         assert!(out.contains("aittributor"), "global command kept: {out}");
 
         // No duplicate commands — global commands with same names stripped
-        assert!(
-            !out.contains("grep -qe ^test"),
-            "global test stripped: {out}"
-        );
-        assert!(
-            !out.contains("grep -qe ^lint"),
-            "global lint stripped: {out}"
-        );
+        assert!(!out.contains("grep -qe ^test"), "global test stripped: {out}");
+        assert!(!out.contains("grep -qe ^lint"), "global lint stripped: {out}");
         assert!(!out.contains("grep -qe ^fmt"), "global fmt stripped: {out}");
 
         // Repo jobs present

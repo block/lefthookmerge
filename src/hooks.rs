@@ -177,27 +177,16 @@ mod tests {
         create_hook_symlinks(&hooks, &fake_binary).unwrap();
 
         for name in &stale {
-            assert!(
-                !hooks.join(name).exists(),
-                "stale hook {name} should be removed"
-            );
+            assert!(!hooks.join(name).exists(), "stale hook {name} should be removed");
         }
         for hook in GIT_HOOKS {
-            assert!(
-                hooks
-                    .join(hook)
-                    .symlink_metadata()
-                    .unwrap()
-                    .file_type()
-                    .is_symlink()
-            );
+            assert!(hooks.join(hook).symlink_metadata().unwrap().file_type().is_symlink());
         }
     }
 
     #[test]
     fn test_annotate_hooks_parallel_on_safe_hooks() {
-        let config =
-            yaml("pre-push:\n  commands:\n    foo:\n      run: echo hi\noutput:\n  - success\n");
+        let config = yaml("pre-push:\n  commands:\n    foo:\n      run: echo hi\noutput:\n  - success\n");
         let result = annotate_hooks(config);
         let out = to_yaml(&result);
         assert!(out.contains("parallel: true"), "injects parallel: {out}");
@@ -207,9 +196,7 @@ mod tests {
     #[test]
     fn test_annotate_hooks_no_parallel_on_serial_hooks() {
         for hook in SERIAL_HOOKS {
-            let config = yaml(&format!(
-                "{hook}:\n  commands:\n    foo:\n      run: echo hi\n"
-            ));
+            let config = yaml(&format!("{hook}:\n  commands:\n    foo:\n      run: echo hi\n"));
             let result = annotate_hooks(config);
             let out = to_yaml(&result);
             assert!(!out.contains("parallel"), "no parallel on {hook}: {out}");
@@ -242,10 +229,7 @@ mod tests {
         let config = yaml("pre-push:\n  commands:\n    foo:\n      run: echo hi\n");
         let result = annotate_hooks(config);
         let out = to_yaml(&result);
-        assert!(
-            !out.contains("stage_fixed"),
-            "no stage_fixed on pre-push: {out}"
-        );
+        assert!(!out.contains("stage_fixed"), "no stage_fixed on pre-push: {out}");
     }
 
     #[test]

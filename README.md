@@ -21,7 +21,7 @@ for repo configs), where `<ext>` is `yml`, `yaml`, `json`, `jsonc`, or `toml`.
 
 - Creates symlinks for all standard git hooks in `~/.lhm/hooks/`, each pointing to the `lhm` binary
 - Sets `git config --global core.hooksPath ~/.lhm/hooks`
-- With `--default-config`: writes a default `~/.lefthook.yaml` if no global config exists
+- Writes a default `~/.lefthook.yaml` if no global config exists
 
 ### `lhm dry-run`
 
@@ -36,10 +36,11 @@ lhm dry-run
 When git triggers a hook, it invokes the symlink in `~/.lhm/hooks/`. `lhm` detects the hook name from `argv[0]` and:
 
 0. **lefthook not in PATH**: falls back to executing `.git/hooks/<hook>` directly (if it exists), bypassing all config merging
-1. **Global config** is always available: loaded from `~/.lefthook.yaml` if it exists, otherwise a built-in default is used in memory
+1. **No config at all** (no global, no repo, no adapter): hook is skipped silently
 2. **Both configs exist** (`~/.lefthook.yaml` + `$REPO/lefthook.yaml`): merges global and repo configs, runs `lefthook run <hook>` with `LEFTHOOK_CONFIG` pointing to the merged temp file
 3. **Global only** (no repo config or adapter): runs `lefthook run <hook>` with the global config
-4. **No repo config, but adapter detected**: generates a dynamic lefthook config from the adapter, merges it with the global config, and runs `lefthook run <hook>`
+4. **Repo/adapter only** (no global config): runs `lefthook run <hook>` with the repo or adapter config
+5. **No repo config, but adapter detected**: generates a dynamic lefthook config from the adapter, merges it with the global config (if present), and runs `lefthook run <hook>`
 
 ### Adapters
 

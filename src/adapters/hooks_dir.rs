@@ -20,10 +20,7 @@ pub struct HooksDirAdapter;
 
 /// Return the first hooks directory name that exists as a directory under `root`.
 fn find_hooks_dir(root: &Path) -> Option<&'static str> {
-    HOOKS_DIR_NAMES
-        .iter()
-        .copied()
-        .find(|name| root.join(name).is_dir())
+    HOOKS_DIR_NAMES.iter().copied().find(|name| root.join(name).is_dir())
 }
 
 /// Collect sorted filenames from `hooks_dir` that match `hook_name` exactly
@@ -144,10 +141,7 @@ mod tests {
         let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
         let out = serde_yaml::to_string(&config).unwrap();
         assert!(out.contains(".hooks/pre-commit"), "uses .hooks: {out}");
-        assert!(
-            !out.contains("git-hooks/pre-commit"),
-            "does not use git-hooks: {out}"
-        );
+        assert!(!out.contains("git-hooks/pre-commit"), "does not use git-hooks: {out}");
     }
 
     #[test]
@@ -173,10 +167,7 @@ mod tests {
         let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
         let out = serde_yaml::to_string(&config).unwrap();
         assert!(out.contains("pre-commit:"), "has hook key: {out}");
-        assert!(
-            out.contains("git-hooks/pre-commit"),
-            "has run command: {out}"
-        );
+        assert!(out.contains("git-hooks/pre-commit"), "has run command: {out}");
     }
 
     #[test]
@@ -185,11 +176,7 @@ mod tests {
         let hooks_dir = dir.path().join(".hooks");
         fs::create_dir_all(&hooks_dir).unwrap();
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
     }
 
     #[test]
@@ -210,11 +197,7 @@ mod tests {
         assert!(out.contains("commit-msg:"), "has hook key: {out}");
         assert!(out.contains(".hooks/commit-msg"), "has run command: {out}");
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
     }
 
     #[test]
@@ -232,23 +215,14 @@ mod tests {
         let config = adapter().generate_config(dir.path(), "pre-commit").unwrap();
         let out = serde_yaml::to_string(&config).unwrap();
         assert!(out.contains("hooks-dir:"), "has exact match cmd: {out}");
-        assert!(
-            out.contains("hooks-dir-checkstyle:"),
-            "has checkstyle cmd: {out}"
-        );
+        assert!(out.contains("hooks-dir-checkstyle:"), "has checkstyle cmd: {out}");
         assert!(out.contains("hooks-dir-detekt:"), "has detekt cmd: {out}");
         assert!(
             out.contains(".hooks/pre-commit-checkstyle"),
             "has checkstyle run: {out}"
         );
-        assert!(
-            out.contains(".hooks/pre-commit-detekt"),
-            "has detekt run: {out}"
-        );
-        assert!(
-            !out.contains("pre-push"),
-            "should not contain pre-push: {out}"
-        );
+        assert!(out.contains(".hooks/pre-commit-detekt"), "has detekt run: {out}");
+        assert!(!out.contains("pre-push"), "should not contain pre-push: {out}");
     }
 
     #[test]
@@ -262,14 +236,8 @@ mod tests {
         let out = serde_yaml::to_string(&config).unwrap();
         assert!(out.contains("pre-commit:"), "has hook key: {out}");
         assert!(out.contains("hooks-dir-ktlint:"), "has ktlint cmd: {out}");
-        assert!(
-            out.contains(".hooks/pre-commit-ktlint"),
-            "has ktlint run: {out}"
-        );
-        assert!(
-            !out.contains("hooks-dir:\n"),
-            "should not have exact match cmd: {out}"
-        );
+        assert!(out.contains(".hooks/pre-commit-ktlint"), "has ktlint run: {out}");
+        assert!(!out.contains("hooks-dir:\n"), "should not have exact match cmd: {out}");
     }
 
     #[test]
@@ -284,10 +252,7 @@ mod tests {
         let out = serde_yaml::to_string(&config).unwrap();
         assert!(out.contains("hooks-dir:"), "has exact match cmd: {out}");
         assert!(out.contains("hooks-dir-detekt:"), "has detekt cmd: {out}");
-        assert!(
-            out.contains("git-hooks/pre-push"),
-            "uses git-hooks path: {out}"
-        );
+        assert!(out.contains("git-hooks/pre-push"), "uses git-hooks path: {out}");
         assert!(
             out.contains("git-hooks/pre-push-detekt"),
             "uses git-hooks path for prefixed: {out}"
@@ -323,10 +288,7 @@ mod tests {
         fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\n").unwrap();
 
         let scripts = matching_scripts(&hooks_dir, "pre-commit");
-        assert_eq!(
-            scripts,
-            vec!["pre-commit", "pre-commit-aaa", "pre-commit-zzz"]
-        );
+        assert_eq!(scripts, vec!["pre-commit", "pre-commit-aaa", "pre-commit-zzz"]);
     }
 
     #[test]

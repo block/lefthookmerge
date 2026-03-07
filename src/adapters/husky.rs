@@ -24,8 +24,7 @@ impl Adapter for HuskyAdapter {
             return None;
         }
 
-        let config =
-            format!("{hook_name}:\n  commands:\n    husky:\n      run: .husky/{hook_name}\n");
+        let config = format!("{hook_name}:\n  commands:\n    husky:\n      run: .husky/{hook_name}\n");
         serde_yaml::from_str(&config).ok()
     }
 }
@@ -78,11 +77,7 @@ mod tests {
         let husky_dir = dir.path().join(".husky");
         fs::create_dir_all(&husky_dir).unwrap();
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
     }
 
     #[test]
@@ -103,10 +98,6 @@ mod tests {
         assert!(out.contains("commit-msg:"), "has hook key: {out}");
         assert!(out.contains(".husky/commit-msg"), "has run command: {out}");
 
-        assert!(
-            adapter()
-                .generate_config(dir.path(), "pre-commit")
-                .is_none()
-        );
+        assert!(adapter().generate_config(dir.path(), "pre-commit").is_none());
     }
 }

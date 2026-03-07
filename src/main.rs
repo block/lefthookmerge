@@ -10,9 +10,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use config::{
-    install_default_global_config, load_global_config, read_yaml, repo_config, write_merged_temp,
-};
+use config::{install_default_global_config, load_global_config, read_yaml, repo_config, write_merged_temp};
 use hooks::{GIT_HOOKS, annotate_hooks, create_hook_symlinks, is_hook_name};
 use merge::merge_configs;
 
@@ -69,11 +67,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Configure global core.hooksPath to use lhm
-    Install {
-        /// Write the default global config to ~/.lefthook.yaml
-        #[arg(long)]
-        default_config: bool,
-    },
+    Install,
     /// Print the merged config that would be used, then exit
     DryRun,
 }
@@ -90,7 +84,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     init_logger(cli.debug);
     match cli.command {
-        Commands::Install { default_config } => install(default_config),
+        Commands::Install => install(),
         Commands::DryRun => dry_run(),
     }
 }
@@ -123,13 +117,13 @@ fn repo_root() -> Option<PathBuf> {
         .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
 }
 
-fn install(default_config: bool) -> ExitCode {
+fn install() -> ExitCode {
     let dir = hooks_dir();
     let binary = env::current_exe().expect("cannot determine lhm binary path");
     debug!("hooks dir: {}", dir.display());
     debug!("binary path: {}", binary.display());
 
-    if default_config && let Err(e) = install_default_global_config(&home_dir()) {
+    if let Err(e) = install_default_global_config(&home_dir()) {
         error!("{e}");
         return ExitCode::FAILURE;
     }
@@ -183,17 +177,20 @@ fn adapter_config_for(root: &Path, hook_name: Option<&str>) -> Option<Value> {
 
 /// Resolve global, repo, and adapter sources into a single merged config.
 fn resolve_config(
-    global: &Value,
+    global: &Option<Value>,
     repo: &Option<PathBuf>,
     adapter_config: &Option<Value>,
-) -> Result<Value, String> {
-    match (repo, adapter_config) {
-        (Some(r), _) => {
+) -> Result<Option<Value>, String> {
+    match (global, repo, adapter_config) {
+        (Some(g), Some(r), _) => {
             let rv = read_yaml(r)?;
-            Ok(merge_configs(global.clone(), rv))
+            Ok(Some(merge_configs(g.clone(), rv)))
         }
-        (None, Some(av)) => Ok(merge_configs(global.clone(), av.clone())),
-        (None, None) => Ok(global.clone()),
+        (Some(g), None, Some(av)) => Ok(Some(merge_configs(g.clone(), av.clone()))),
+        (Some(g), None, None) => Ok(Some(g.clone())),
+        (None, Some(r), _) => read_yaml(r).map(Some),
+        (None, None, Some(av)) => Ok(Some(av.clone())),
+        (None, None, None) => Ok(None),
     }
 }
 
@@ -219,8 +216,12 @@ fn dry_run() -> ExitCode {
     }
 
     match resolve_config(&global, &repo, &adapter_config) {
-        Ok(config) => {
+        Ok(Some(config)) => {
             print!("{}", serde_yaml::to_string(&config).unwrap_or_default());
+            ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            debug!("no config to display");
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -289,20 +290,24 @@ fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
     debug!("repo config: {:?}", repo);
 
     let adapter_config = if repo.is_none() {
-        root.as_deref()
-            .and_then(|r| adapter_config_for(r, Some(hook_name)))
+        root.as_deref().and_then(|r| adapter_config_for(r, Some(hook_name)))
     } else {
         None
     };
 
-    let _temp = match resolve_config(&global, &repo, &adapter_config) {
-        Ok(merged) => match write_merged_temp(merged) {
-            Ok(t) => t,
-            Err(e) => {
-                error!("{e}");
-                return ExitCode::FAILURE;
-            }
-        },
+    let merged = match resolve_config(&global, &repo, &adapter_config) {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            debug!("no config found, skipping hook");
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => {
+            error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let _temp = match write_merged_temp(merged) {
+        Ok(t) => t,
         Err(e) => {
             error!("{e}");
             return ExitCode::FAILURE;
@@ -311,10 +316,7 @@ fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
     let config_path = _temp.path();
 
     debug!("LEFTHOOK_CONFIG={}", config_path.display());
-    debug!(
-        "running: lefthook run {hook_name} --no-auto-install {}",
-        args.join(" ")
-    );
+    debug!("running: lefthook run {hook_name} --no-auto-install {}", args.join(" "));
 
     let status = Command::new("lefthook")
         .arg("run")
@@ -356,9 +358,7 @@ mod tests {
             fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let status = Command::new(&hook)
-            .status()
-            .expect("hook script should be executable");
+        let status = Command::new(&hook).status().expect("hook script should be executable");
         assert!(status.success());
     }
 
@@ -384,9 +384,7 @@ mod tests {
             fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let status = Command::new(&hook)
-            .status()
-            .expect("hook script should be executable");
+        let status = Command::new(&hook).status().expect("hook script should be executable");
         assert!(!status.success());
     }
 }
