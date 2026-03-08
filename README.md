@@ -23,6 +23,10 @@ for repo configs), where `<ext>` is `yml`, `yaml`, `json`, `jsonc`, or `toml`.
 - Sets `git config --global core.hooksPath ~/.lhm/hooks`
 - Writes a default `~/.lefthook.yaml` if no global config exists
 
+### `lhm disable`
+
+Unsets `git config --global core.hooksPath`, disabling lhm. The hook symlinks in `~/.lhm/hooks/` are left in place so `lhm install` can re-enable quickly.
+
 ### `lhm dry-run`
 
 Prints the merged config that would be used for the current repo, then exits. Useful for verifying what hooks will run.

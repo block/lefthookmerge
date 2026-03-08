@@ -70,6 +70,8 @@ enum Commands {
     Install,
     /// Print the merged config that would be used, then exit
     DryRun,
+    /// Remove global core.hooksPath, disabling lhm
+    Disable,
 }
 
 fn main() -> ExitCode {
@@ -86,6 +88,7 @@ fn main() -> ExitCode {
     match cli.command {
         Commands::Install => install(),
         Commands::DryRun => dry_run(),
+        Commands::Disable => disable(),
     }
 }
 
@@ -146,6 +149,28 @@ fn install() -> ExitCode {
         }
         _ => {
             error!("failed to set core.hooksPath");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn disable() -> ExitCode {
+    let status = Command::new("git")
+        .args(["config", "--global", "--unset", "core.hooksPath"])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            info!("removed core.hooksPath, lhm disabled");
+            ExitCode::SUCCESS
+        }
+        Ok(s) if s.code() == Some(5) => {
+            // Exit code 5 means the key was not set
+            info!("core.hooksPath was not set, nothing to do");
+            ExitCode::SUCCESS
+        }
+        _ => {
+            error!("failed to unset core.hooksPath");
             ExitCode::FAILURE
         }
     }
