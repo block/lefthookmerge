@@ -10,7 +10,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use config::{install_default_global_config, load_global_config, read_yaml, repo_config, write_merged_temp};
+use config::{
+    ConfigOverrides, install_default_global_config, load_global_config, read_yaml, repo_config, write_merged_temp,
+};
 use hooks::{GIT_HOOKS, annotate_hooks, create_hook_symlinks, is_hook_name};
 use merge::merge_configs;
 
@@ -60,6 +62,14 @@ struct Cli {
     #[arg(long, global = true)]
     debug: bool,
 
+    /// Path to the global lefthook config (also via LHM_GLOBAL_CONFIG)
+    #[arg(long, global = true)]
+    global_config: Option<PathBuf>,
+
+    /// Path to the local (repo) lefthook config (also via LHM_LOCAL_CONFIG)
+    #[arg(long, global = true)]
+    local_config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -80,14 +90,16 @@ fn main() -> ExitCode {
     if is_hook_name(&invoked_as) {
         init_logger(false);
         debug!("invoked as hook: {invoked_as}");
-        return run_hook(&invoked_as, env::args().skip(1).collect());
+        let overrides = ConfigOverrides::from_env();
+        return run_hook(&invoked_as, env::args().skip(1).collect(), &overrides);
     }
 
     let cli = Cli::parse();
     init_logger(cli.debug);
+    let overrides = ConfigOverrides::new(cli.global_config, cli.local_config);
     match cli.command {
         Commands::Install => install(),
-        Commands::DryRun => dry_run(),
+        Commands::DryRun => dry_run(&overrides),
         Commands::Disable => disable(),
     }
 }
@@ -219,8 +231,8 @@ fn resolve_config(
     }
 }
 
-fn dry_run() -> ExitCode {
-    let global = match load_global_config(&home_dir()) {
+fn dry_run(overrides: &ConfigOverrides) -> ExitCode {
+    let global = match load_global_config(&home_dir(), overrides) {
         Ok(v) => v,
         Err(e) => {
             error!("{e}");
@@ -228,7 +240,7 @@ fn dry_run() -> ExitCode {
         }
     };
     let root = repo_root();
-    let repo = root.as_deref().and_then(repo_config);
+    let repo = root.as_deref().and_then(|r| repo_config(r, overrides));
 
     let adapter_config = if repo.is_none() {
         root.as_deref().and_then(|r| adapter_config_for(r, None))
@@ -295,13 +307,13 @@ fn run_git_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
     }
 }
 
-fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
+fn run_hook(hook_name: &str, args: Vec<String>, overrides: &ConfigOverrides) -> ExitCode {
     if !lefthook_in_path() {
         debug!("lefthook not found in PATH, falling back to .git/hooks");
         return run_git_hook(hook_name, args);
     }
 
-    let global = match load_global_config(&home_dir()) {
+    let global = match load_global_config(&home_dir(), overrides) {
         Ok(v) => v,
         Err(e) => {
             error!("{e}");
@@ -309,7 +321,7 @@ fn run_hook(hook_name: &str, args: Vec<String>) -> ExitCode {
         }
     };
     let root = repo_root();
-    let repo = root.as_deref().and_then(repo_config);
+    let repo = root.as_deref().and_then(|r| repo_config(r, overrides));
 
     debug!("repo root: {:?}", root);
     debug!("repo config: {:?}", repo);
