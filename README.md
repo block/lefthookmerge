@@ -35,6 +35,22 @@ Prints the merged config that would be used for the current repo, then exits. Us
 lhm dry-run
 ```
 
+### Config overrides
+
+The global and local (repo) config paths can be overridden via CLI flags or environment variables. CLI flags are available on `dry-run`; env vars work everywhere, including during hook invocations.
+
+| Override | CLI flag | Environment variable |
+|----------|----------|---------------------|
+| Global config | `--global-config <path>` | `LHM_GLOBAL_CONFIG` |
+| Local config | `--local-config <path>` | `LHM_LOCAL_CONFIG` |
+
+CLI flags take precedence over env vars. When set, the override path is used directly instead of searching for `lefthook.<ext>` files.
+
+```sh
+lhm --global-config ~/custom-global.yaml dry-run
+LHM_LOCAL_CONFIG=./other.yml git commit
+```
+
 ### Hook execution
 
 When git triggers a hook, it invokes the symlink in `~/.lhm/hooks/`. `lhm` detects the hook name from `argv[0]` and:
